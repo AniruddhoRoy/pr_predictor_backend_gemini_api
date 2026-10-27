@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PR Analyzer · Admin</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; background: #f4f6f8; color: #172033; margin: 0; }
+    main { max-width: 850px; margin: 60px auto; padding: 28px; background: white; border-radius: 12px; }
+    h1 { margin-top: 0; } p { color: #526075; } label { display: block; margin-bottom: 8px; }
+    input, button { font: inherit; padding: 10px 12px; border: 1px solid #bdc6d4; border-radius: 6px; }
+    button { background: #2055b5; color: white; cursor: pointer; } button:disabled { opacity: .5; }
+    input { max-width: 100%; box-sizing: border-box; } a { color: #2055b5; }
+    form, .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+    td, th { padding: 12px 8px; text-align: left; border-bottom: 1px solid #e5e9ef; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    .table { overflow-x: auto; } #message { white-space: pre-wrap; color: #a32222; }
+    #new-token { background: #eef6ee; padding: 14px; overflow-wrap: anywhere; }
+    #token-value { display: block; user-select: all; margin-top: 8px; }
+    .secondary { background: white; color: #172033; } .danger { background: #aa2833; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>PR Analyzer</h1>
+  <p>Create and manage tokens for the analysis API. <a href="/docs">API documentation</a></p>
+  <form id="login">
+    <div><label for="password">Admin password</label><input id="password" type="password" autocomplete="current-password" required></div>
+    <button>Sign in</button>
+  </form>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="dashboard" hidden>
+    <form id="create">
+      <div><label for="name">Token name</label><input id="name" placeholder="My frontend" maxlength="80" required></div>
+      <button>Create token</button><button id="logout" class="secondary" type="button">Sign out</button>
+    </form>
+    <div id="new-token" hidden><p>Copy this token now. It is only shown once.</p><code id="token-value"></code></div>
+    <div class="table"><table>
+      <thead><tr><th>Name</th><th>Prefix</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="tokens"></tbody>
+    </table></div>
+    <p id="empty" hidden>No tokens yet. Create one above to get started.</p>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  let password = ''; // Kept in memory only; refreshing the page signs out.
+  async function api(path, method = 'GET', body) {
+    const response = await fetch(path, {
+      method, cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-Admin-Password': password},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const data = response.status === 204 ? null : await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Please check your input.');
+    return data;
+  }
+  async function run(action) {
+    $('message').textContent = '';
+    document.querySelectorAll('button').forEach(button => button.disabled = true);
+    try { await action(); } catch (error) { $('message').textContent = error.message; }
+    finally { document.querySelectorAll('button').forEach(button => button.disabled = false); }
+  }
+  async function refresh() {
+    const tokens = await api('/admin/tokens');
+    $('tokens').replaceChildren();
+    $('empty').hidden = tokens.length > 0;
+    for (const token of tokens) {
+      const row = document.createElement('tr');
+      for (const value of [token.name, token.prefix + '…', token.active ? 'Active' : 'Suspended']) {
+        const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
+      }
+      const actions = document.createElement('td'); actions.className = 'actions';
+      const toggle = document.createElement('button');
+      toggle.textContent = token.active ? 'Suspend' : 'Activate'; toggle.className = 'secondary';
+      toggle.onclick = () => run(async () => {
+        await api('/admin/tokens/' + token.id, 'PATCH', {active: !token.active}); await refresh();
+      });
+      const remove = document.createElement('button'); remove.textContent = 'Delete'; remove.className = 'danger';
+      remove.onclick = () => {
+        if (confirm('Delete token "' + token.name + '"?')) run(async () => {
+          await api('/admin/tokens/' + token.id, 'DELETE'); await refresh();
+        });
+      };
+      actions.append(toggle, remove); row.append(actions); $('tokens').append(row);
+    }
+  }
+  $('login').onsubmit = event => {
+    event.preventDefault(); password = $('password').value;
+    run(async () => { await refresh(); $('login').hidden = true; $('dashboard').hidden = false; $('password').value = ''; });
+  };
+  $('create').onsubmit = event => {
+    event.preventDefault();
+    run(async () => {
+      const token = await api('/admin/tokens', 'POST', {name: $('name').value});
+      $('token-value').textContent = token.token; $('new-token').hidden = false; $('name').value = ''; await refresh();
+    });
+  };
+  $('logout').onclick = () => {
+    password = ''; $('token-value').textContent = ''; $('tokens').replaceChildren(); $('new-token').hidden = true;
+    $('dashboard').hidden = true; $('login').hidden = false; $('message').textContent = ''; $('password').focus();
+  };
+</script>
+</body>
+</html>
+
